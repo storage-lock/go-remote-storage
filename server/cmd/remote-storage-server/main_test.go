@@ -24,8 +24,11 @@ func TestSQLiteDSNUsesAmpersand(t *testing.T) {
 		t.Errorf("DSN 不能含 '('，参数会被忽略: %s", dsn)
 	}
 	// 参数之间必须用 & 分隔。
-	if strings.Count(dsn, "&") != 3 {
-		t.Errorf("DSN 应有 3 个 & 分隔符: %s", dsn)
+	if !strings.Contains(dsn, "wal_autocheckpoint=1000") {
+		t.Errorf("DSN 缺少 wal_autocheckpoint，WAL 会无限膨胀: %s", dsn)
+	}
+	if strings.Count(dsn, "&") != 5 {
+		t.Errorf("DSN 应有 5 个 & 分隔符: %s", dsn)
 	}
 }
 
