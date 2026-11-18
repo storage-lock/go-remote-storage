@@ -42,7 +42,6 @@ const (
 	CodeRateLimited     ErrorCode = "rate_limited"
 	CodeBadRequest      ErrorCode = "bad_request"
 	CodeInternal        ErrorCode = "internal"
-	CodeProtocolVersion ErrorCode = "protocol_version"
 )
 
 // ErrorResponse 是任何非 2xx 响应的 body。
@@ -101,15 +100,6 @@ type TimeResponse struct {
 // GetTime 还原成 time.Time。
 func (r TimeResponse) GetTime() time.Time {
 	return time.Unix(0, r.UnixNano).UTC()
-}
-
-// LockValue 是单个锁记录的存储形态。
-//
-// 这里刻意只用"版本 + JSON 字符串"，与 Storage 接口的 Get 返回类型对齐，
-// 避免服务端和客户端对 LockInformation 结构各有一份理解。
-type LockValue struct {
-	Version           storage.Version `json:"version"`
-	InformationJSON   string          `json:"information_json"`
 }
 
 // CreateRequest 是 CreateWithVersion 的请求体。
