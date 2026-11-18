@@ -43,11 +43,31 @@ else
   echo "$CONF/server.env 已存在，保留原 token"
 fi
 
-echo "==> 编译"
+echo "==> 检查 Go 工具链"
 if ! command -v go >/dev/null; then
-  echo "未找到 Go 工具链；请安装 Go 1.23+ 或改用 deploy/Dockerfile" >&2
+  cat >&2 <<'ERR'
+未找到 Go。请任选其一：
+  a) 安装 Go 1.23+：https://go.dev/dl/
+  b) 用 Docker：docker build -f deploy/Dockerfile -t remote-storage .
+ERR
   exit 1
 fi
+GOVER=$(go env GOVERSION 2>/dev/null | sed 's/go//')
+echo "    当前 Go: $GOVER"
+# go.mod 要求 1.23；低版本会自动尝试下载 toolchain，离线机器上会失败。
+# 提前检测并给出明确指引，而不是让构建报一个看不懂的 toolchain 错误。
+if ! go version | grep -qE 'go1\.(2[3-9]|[3-9][0-9])'; then
+  cat >&2 <<ERR
+当前 Go ($GOVER) 低于 1.23。两种处理方式：
+  a) 升级 Go：https://go.dev/dl/
+  b) 用 Docker 构建（镜像里自带 Go 1.23）：
+       docker build -f deploy/Dockerfile -t remote-storage .
+  c) 离线机器可设置 GOPROXY=off 并手动装 toolchain
+ERR
+  exit 1
+fi
+
+echo "==> 编译"
 cd "$SRC"
 CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o "$BIN" ./server/cmd/remote-storage-server
 chmod 0755 "$BIN"
