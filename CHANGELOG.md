@@ -15,6 +15,17 @@
 - 测试：真实 HTTP 服务下跑完整锁语义（互斥、并发临界区、FairLock 双实例、
   租约抢占、fencing token 单调、含 `/` 的 lock id、鉴权、协议版本、无 CAS 拒绝）
 
+## v0.1.5
+
+### 修复
+
+- **SQLite 并发参数拼错导致高并发下随机 500**。DSN 分隔符写成了 `(`
+  （`?_journal_mode(WAL&_busy_timeout(5000...`），mattn/go-sqlite3 会静默忽略
+  整串参数——WAL、busy_timeout、synchronous、txlock 全都没生效。
+  实测 3 分钟混合负载 11316 个请求里出现 21 个 `database is locked`。
+  改正为 `&` 后 WAL 真正启用（目录下出现 `-wal`/`-shm` 文件）。
+- 加回归测试 `TestSQLiteDSNUsesAmpersand`，锁住这个坑。
+
 ## v0.1.4
 
 ### 新增背压
