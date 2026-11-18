@@ -197,6 +197,7 @@ func TestListReturnsAllLocks(t *testing.T) {
 func TestProtocolVersionMismatchRejected(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/capabilities", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"protocol_version": "v999",
 			"name":             "future",

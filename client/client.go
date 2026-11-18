@@ -262,8 +262,17 @@ func (rs *RemoteStorage) do(ctx context.Context, method, path string,
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
+	// 非 JSON 响应通常意味着地址指向了别的服务（例如 nginx 错误页、探活页）。
+	// 直接报"decode 失败"会让人以为是数据坏了，这里给出可行动的提示。
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(ct, "application/json") {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("remote storage: %s %s returned non-JSON content-type %q "+
+			"(is the base URL pointing at the remote-storage server?): %s",
+			method, path, ct, strings.TrimSpace(string(raw)))
+	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("remote storage: decode response: %w", err)
+		return fmt.Errorf("remote storage: decode response from %s %s: %w", method, path, err)
 	}
 	return nil
 }
