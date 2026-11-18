@@ -133,7 +133,25 @@ err = lock.Lock(ctx, owner)
 - 无 token 拒绝建连、协议版本不匹配拒绝启动
 - 底层无 CAS 的存储被拒绝启动
 
-## 部署到 VPS（完整产品链路）
+## 部署到 VPS
+
+一键安装（systemd）：
+
+```bash
+sudo git clone https://github.com/storage-lock/go-remote-storage.git
+cd go-remote-storage && sudo ./deploy/install.sh
+```
+
+脚本会建专用用户、生成 token、编译安装、装 systemd unit（含 `MemoryMax=256M`
+与 `ProtectSystem=strict` 等加固项），然后打印 nginx/TLS 下一步。
+
+Docker：`docker build -f deploy/Dockerfile -t remote-storage .`，
+数据挂卷到 `/data`，token 通过 `REMOTE_STORAGE_TOKEN` 固定。
+Docker Hub 拉不动时用 `--build-arg RUNTIME_BASE=nginx:1.27-alpine`。
+
+nginx 反代模板在 `deploy/nginx.conf`（强制 TLS + HSTS + 覆写 XFF）。
+
+## 完整产品链路
 
 ```bash
 # 1. 存储服务（唯一事实来源）

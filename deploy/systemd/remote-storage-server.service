@@ -1,0 +1,39 @@
+[Unit]
+Description=Remote Storage Server (go-remote-storage)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=remote-storage
+Group=remote-storage
+WorkingDirectory=/var/lib/remote-storage
+ExecStart=/usr/local/bin/remote-storage-server \
+    --addr 127.0.0.1:8443 \
+    --data /var/lib/remote-storage/locks.db
+EnvironmentFile=/etc/remote-storage/server.env
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+
+# 加固
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/remote-storage
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+
+LimitNOFILE=65535
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target
