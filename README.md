@@ -105,6 +105,28 @@ err = lock.Lock(ctx, owner)
 这个映射必须精确。上层 `go-storage-lock` 的抢占逻辑只把 `ErrVersionMiss`
 当成"可以重试"，映射错了会让抢占路径死循环或直接失败。
 
+## 跨网络要调重试间隔
+
+`go-storage-lock` 默认 `VersionMissRetryInterval` 是 1 秒——为本地存储设计。
+跨公网时单次 CAS 往返几十毫秒，多客户端争抢会让抢不到的一方等 1 秒才重试，
+30 秒超时内试不了几次，会**饿死**。
+
+实测：8 进程跨公网抢同一把锁，用默认值时有 2 个进程 30 秒超时；
+改用推荐值后 80/80 全部成功、零重叠。
+
+```go
+// 固定 100ms（适合 RTT < 70ms）
+opts := client.RecommendedOptions("order-42")
+
+// 按实测 RTT 自适应（取 1.5 倍，下限 50ms）
+rtt := measureRTT(store)          // 用几次 GetTime 的平均值
+opts := client.RecommendedOptionsForRTT("order-42", rtt)
+
+lock, err := storage_lock.NewStorageLockWithOptions(store, opts)
+```
+
+间隔不能小于单次 CAS 往返，否则会在网络上空转。
+
 ## 设计约束（都有测试覆盖）
 
 **能力必须来自服务端。** 客户端 `Capabilities()` 原样转发服务端的声明，
