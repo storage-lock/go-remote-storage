@@ -144,6 +144,8 @@ type GetResponse struct {
 // 对锁数量极大的部署应先改成游标分页（见 README 的边界说明）。
 type ListResponse struct {
 	Items []ListedLock `json:"items"`
+	// Truncated 为真表示服务端达到了返回条数上限，结果不完整。
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // ListedLock 是 List 里的一项。

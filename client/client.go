@@ -214,6 +214,11 @@ func (rs *RemoteStorage) List(ctx context.Context) (go_iterator.Iterator[*storag
 	if err := rs.do(ctx, http.MethodGet, remote.RouteLocks, nil, &resp, true); err != nil {
 		return nil, err
 	}
+	if resp.Truncated {
+		// 不静默返回不完整结果：上层会据此以为"只有这么多锁"。
+		return nil, fmt.Errorf("remote storage: list truncated at server limit; "+
+			"the result is incomplete (%d items), narrow the query or raise the server limit", len(resp.Items))
+	}
 	items := make([]*storage.LockInformation, 0, len(resp.Items))
 	for _, item := range resp.Items {
 		info, err := storage.LockInformationFromJsonString(item.InformationJSON)

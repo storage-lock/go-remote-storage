@@ -35,6 +35,7 @@ func run() error {
 	token := flag.String("token", envOr("REMOTE_STORAGE_TOKEN", ""), "访问令牌；为空表示不鉴权（仅适合回环/内网）")
 	tlsCert := flag.String("tls-cert", os.Getenv("REMOTE_STORAGE_TLS_CERT"), "TLS 证书")
 	tlsKey := flag.String("tls-key", os.Getenv("REMOTE_STORAGE_TLS_KEY"), "TLS 私钥")
+	maxList := flag.Int("max-list-items", 20000, "List 一次返回的最大条数；超过时标记 truncated")
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -53,7 +54,10 @@ func run() error {
 		logger.Warn("未设置 REMOTE_STORAGE_TOKEN，服务无鉴权；只应监听回环或内网")
 	}
 
-	h, err := server.New(server.Options{Storage: store, Authenticator: auth, Logger: logger})
+	h, err := server.New(server.Options{
+		Storage: store, Authenticator: auth, Logger: logger,
+		MaxListItems: *maxList,
+	})
 	if err != nil {
 		return err
 	}

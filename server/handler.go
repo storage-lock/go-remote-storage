@@ -38,6 +38,13 @@ type Options struct {
 
 	// OperationTimeout 单次存储操作超时，默认 10s。
 	OperationTimeout time.Duration
+
+	// MaxListItems 限制 List 一次返回的条数，默认 20000。
+	//
+	// 一次性拉全量在锁数量很大时会撑爆内存和响应体。超过上限时返回 413 并提示
+	// 调用方改用更小的视线范围（当前协议没有分页）。这是一个显式的背压，
+	// 好过让服务端 OOM 或者让客户端解析一个几百 MB 的响应。
+	MaxListItems int
 }
 
 // Authenticator 决定这个请求能否访问存储。返回的 subject 只用于日志。
@@ -50,8 +57,9 @@ type Handler struct {
 	store    storage.Storage
 	auth     Authenticator
 	logger   *slog.Logger
-	maxBody  int64
+	maxBody   int64
 	opTimeout time.Duration
+	maxList   int
 	name     string
 	caps     []storage.StorageCapability
 }
@@ -83,9 +91,13 @@ func New(opts Options) (*Handler, error) {
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
+	maxList := opts.MaxListItems
+	if maxList <= 0 {
+		maxList = 20000
+	}
 	return &Handler{
 		store: opts.Storage, auth: opts.Authenticator, logger: logger,
-		maxBody: maxBody, opTimeout: timeout,
+		maxBody: maxBody, opTimeout: timeout, maxList: maxList,
 		name: opts.Storage.GetName(), caps: caps,
 	}, nil
 }
@@ -170,10 +182,15 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := []remote.ListedLock{}
+	truncated := false
 	for iter.Next() {
 		info := iter.Value()
 		if info == nil {
 			continue
+		}
+		if len(items) >= h.maxList {
+			truncated = true
+			break
 		}
 		items = append(items, remote.ListedLock{
 			LockID:          info.LockId,
@@ -181,7 +198,10 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 			InformationJSON: info.ToJsonString(),
 		})
 	}
-	writeJSON(w, http.StatusOK, remote.ListResponse{Items: items})
+	if truncated {
+		h.logger.Warn("list truncated", "limit", h.maxList)
+	}
+	writeJSON(w, http.StatusOK, remote.ListResponse{Items: items, Truncated: truncated})
 }
 
 // lock 处理 /v1/locks/{id}。
