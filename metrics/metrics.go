@@ -15,6 +15,7 @@ package metrics
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -223,42 +224,36 @@ func statusClass(status int) string {
 // 这是低基数的关键：/v1/locks/{任意 id} 必须归成 /v1/locks/{id}，
 // 否则每个 lock id 都会生成一条新的时序。
 func RouteLabel(path string) string {
-	switch {
-	case path == "/v1/health" || path == "/health":
-		return "/health"
-	case contains(path, "/v1/locks/"):
-		return "/v1/locks/{id}"
-	case contains(path, "/v1/locks"):
-		return "/v1/locks"
-	case contains(path, "/v1/time"):
-		return "/v1/time"
-	case contains(path, "/v1/capabilities"):
-		return "/v1/capabilities"
-	case contains(path, "/api/v1/locks/"):
-		return "/api/v1/locks/{id}"
-	case contains(path, "/api/v1/locks"):
-		return "/api/v1/locks"
-	case contains(path, "/api/v1/tenant"):
-		return "/api/v1/tenant"
-	case contains(path, "/api/v1/endpoints"):
-		return "/api/v1/endpoints"
-	case contains(path, "/metrics"):
-		return "/metrics"
-	default:
-		// 未知路径归为一类，防止扫描器用随机路径把基数打爆。
-		return "other"
+	// 顺序很重要：必须从最具体到最宽泛匹配。
+	// 曾经把 /v1/locks 放在 /api/v1/locks 前面，导致 cloud-api 的
+	// /api/v1/locks 被归成 /v1/locks —— 两个服务共用指标时会混淆。
+	routes := []struct {
+		prefix string
+		label  string
+	}{
+		// remote-storage-server
+		{"/v1/locks/", "/v1/locks/{id}"},
+		{"/v1/locks", "/v1/locks"},
+		{"/v1/time", "/v1/time"},
+		{"/v1/capabilities", "/v1/capabilities"},
+		{"/v1/health", "/health"},
+		// storage-lock-cloud-api
+		{"/api/v1/locks/", "/api/v1/locks/{id}"},
+		{"/api/v1/locks", "/api/v1/locks"},
+		{"/api/v1/tenant", "/api/v1/tenant"},
+		{"/api/v1/tenants", "/api/v1/tenant"},
+		{"/api/v1/endpoints/", "/api/v1/endpoints"},
+		{"/api/v1/endpoints", "/api/v1/endpoints"},
+		// 通用
+		{"/health", "/health"},
+		{"/metrics", "/metrics"},
 	}
-}
-
-func contains(s, sub string) bool {
-	return len(sub) <= len(s) && indexOf(s, sub) >= 0
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
+	for _, r := range routes {
+		if strings.HasPrefix(path, r.prefix) {
+			return r.label
 		}
 	}
-	return -1
+	// 未知路径归为一类，防止扫描器用随机路径把基数打爆。
+	return "other"
 }
+

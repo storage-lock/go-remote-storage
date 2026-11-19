@@ -145,3 +145,25 @@ func TestAuthFailureCounted(t *testing.T) {
 		"鉴权失败必须计数，0123 否则无法配告警")
 }
 
+
+// TestRouteLabelDistinguishesServices 验证两个服务的同名路径不会互相混淆。
+// 早期版本用子串匹配，" /v1/locks " 会命中 "/api/v1/locks"；
+// 现在改成精确前缀匹配，从最具体到最宽泛。
+func TestRouteLabelDistinguishesServices(t *testing.T) {
+	cases := map[string]string{
+		"/v1/locks":            "/v1/locks",
+		"/v1/locks/x":          "/v1/locks/{id}",
+		"/api/v1/locks":        "/api/v1/locks",
+		"/api/v1/locks/x":      "/api/v1/locks/{id}",
+		"/api/v1/tenant":       "/api/v1/tenant",
+		"/api/v1/tenants":      "/api/v1/tenant",
+		"/api/v1/endpoints":    "/api/v1/endpoints",
+		"/api/v1/endpoints/best": "/api/v1/endpoints",
+		"/health":              "/health",
+		"/v1/health":           "/health",
+		"/metrics":             "/metrics",
+	}
+	for path, want := range cases {
+		require.Equal(t, want, metrics.RouteLabel(path), "path=%s", path)
+	}
+}
