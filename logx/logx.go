@@ -128,6 +128,8 @@ type MiddlewareOptions struct {
 	SlowThreshold time.Duration
 	// ClientIP 从请求取真实 IP；保证与限流用的是同一个口径。
 	ClientIP func(*http.Request) string
+	// OnSlow 在判定为慢请求时回调，供指标层计数。可为 nil。
+	OnSlow func()
 }
 
 func Middleware(opts MiddlewareOptions) func(http.Handler) http.Handler {
@@ -181,6 +183,9 @@ func Middleware(opts MiddlewareOptions) func(http.Handler) http.Handler {
 					logger.Debug("request", attrs...)
 				}
 				if elapsed > slow {
+					if opts.OnSlow != nil {
+						opts.OnSlow()
+					}
 					logger.Warn("slow request", append(attrs,
 						"event", EventSlowRequest,
 						"threshold_ms", slow.Milliseconds())...)

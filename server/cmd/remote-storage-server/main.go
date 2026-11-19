@@ -20,6 +20,8 @@ import (
 	memory_storage "github.com/storage-lock/go-memory-storage"
 	sqlite3_storage "github.com/storage-lock/go-sqlite3-storage"
 	remote_logx "github.com/storage-lock/go-remote-storage/logx"
+	"github.com/storage-lock/go-remote-storage/metrics"
+	remote "github.com/storage-lock/go-remote-storage"
 	"github.com/storage-lock/go-remote-storage/server"
 )
 
@@ -41,6 +43,7 @@ func run() error {
 		"日志级别：debug/info/warn/error")
 	logFormat := flag.String("log-format", envOr("REMOTE_STORAGE_LOG_FORMAT", "json"),
 		"日志格式：json（生产，便于采集）或 text（人读）")
+	metricsEnable := flag.Bool("metrics", true, "是否暴露 /metrics（Prometheus 指标）")
 	flag.Parse()
 
 	logger, err := newLogger(*logLevel, *logFormat)
@@ -55,6 +58,12 @@ func run() error {
 	}
 	defer closer()
 
+	var reg *metrics.Registry
+	if *metricsEnable {
+		reg = metrics.New("remote_storage")
+		reg.SetVersion(remote.Version)
+	}
+
 	var auth server.Authenticator
 	if strings.TrimSpace(*token) != "" {
 		auth = server.BearerAuth{Token: *token}
@@ -62,19 +71,32 @@ func run() error {
 		logger.Warn("未设置 REMOTE_STORAGE_TOKEN，服务无鉴权；只应监听回环或内网")
 	}
 
+	// 用带指标的包装器记录每次底层存储操作的耗时与结果。
+	if reg != nil {
+		store = metrics.WrapStorage(store, reg)
+	}
 	h, err := server.New(server.Options{
 		Storage: store, Authenticator: auth, Logger: logger,
-		MaxListItems: *maxList,
+		MaxListItems: *maxList, Metrics: reg,
 	})
 	if err != nil {
 		return err
 	}
 
 	// 访问日志在最外层：包住所有路由，保证每个请求都有 request_id。
+	srvHandler := h.Routes()
+	if reg != nil {
+		srvHandler = metrics.HTTPMiddleware(reg, srvHandler)
+	}
 	handler := remote_logx.Middleware(remote_logx.MiddlewareOptions{
 		Logger:        logger,
 		SlowThreshold: 2 * time.Second,
-	})(h.Routes())
+		OnSlow: func() {
+			if reg != nil {
+				reg.IncSlowRequest()
+			}
+		},
+	})(srvHandler)
 
 	srv := &http.Server{
 		Addr:              *addr,

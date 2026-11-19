@@ -20,6 +20,7 @@ import (
 	"github.com/storage-lock/go-storage"
 	storage_lock "github.com/storage-lock/go-storage-lock"
 	remote "github.com/storage-lock/go-remote-storage"
+	"github.com/storage-lock/go-remote-storage/metrics"
 	remote_logx "github.com/storage-lock/go-remote-storage/logx"
 )
 
@@ -40,6 +41,9 @@ type Options struct {
 
 	// OperationTimeout 单次存储操作超时，默认 10s。
 	OperationTimeout time.Duration
+
+	// Metrics 可选。非空时记录 HTTP/存储/限流指标。
+	Metrics *metrics.Registry
 
 	// MaxListItems 限制 List 一次返回的条数，默认 20000。
 	//
@@ -62,6 +66,7 @@ type Handler struct {
 	maxBody   int64
 	opTimeout time.Duration
 	maxList   int
+	metrics   *metrics.Registry
 	name     string
 	caps     []storage.StorageCapability
 }
@@ -99,7 +104,7 @@ func New(opts Options) (*Handler, error) {
 	}
 	return &Handler{
 		store: opts.Storage, auth: opts.Authenticator, logger: logger,
-		maxBody: maxBody, opTimeout: timeout, maxList: maxList,
+		maxBody: maxBody, opTimeout: timeout, maxList: maxList, metrics: opts.Metrics,
 		name: opts.Storage.GetName(), caps: caps,
 	}, nil
 }
@@ -117,6 +122,11 @@ func hasCap(caps []storage.StorageCapability, want storage.StorageCapability) bo
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(remote.RouteHealth, h.health)
+	if h.metrics != nil {
+		// 指标端点不鉴权：它只暴露聚合量，不含租户信息。
+		// 部署上必须只监听回环（默认就是），公网入口交给 nginx 且不转发该路径。
+		mux.Handle("/metrics", h.metrics.Handler())
+	}
 	// capabilities 也要鉴权：否则未授权的客户端会以为自己连上了，
 	// 直到第一次真实操作才失败——把配置错误推迟到运行时。
 	mux.HandleFunc(remote.RouteCapabilities, h.requireAuth(h.capabilities))
@@ -369,6 +379,17 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, id string) {
 // 映射必须精确：客户端会把 CodeVersionMiss 还原成 ErrVersionMiss，
 // 上层据此决定"重试还是失败"。映射错了会让抢占路径死循环。
 func (h *Handler) writeStorageError(w http.ResponseWriter, ctx context.Context, err error) {
+	// 版本冲突是正常的重试信号，归为 expected；其余才是故障。
+	kind := "expected"
+	switch {
+	case errors.Is(err, storage_lock.ErrVersionMiss),
+		errors.Is(err, storage_lock.ErrLockNotFound),
+		errors.Is(err, storage_lock.ErrLockAlreadyExists):
+		kind = "expected"
+	}
+	if h.metrics != nil && kind != "expected" {
+		h.metrics.IncStorageError("unexpected")
+	}
 	switch {
 	case errors.Is(err, storage_lock.ErrVersionMiss):
 		writeErr(w, http.StatusConflict, remote.CodeVersionMiss, "version mismatch")
@@ -389,6 +410,9 @@ func (h *Handler) recoverPanic(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
+				if h.metrics != nil {
+					h.metrics.IncPanic()
+				}
 				h.logger.Error("panic recovered",
 					"event", remote_logx.EventPanic,
 					"request_id", remote_logx.RequestIDFrom(r.Context()),
@@ -418,6 +442,9 @@ func (h *Handler) requireAuth(fn http.HandlerFunc) http.HandlerFunc {
 				"path", r.URL.Path,
 				"auth_scheme", authScheme(r),
 			)
+			if h.metrics != nil {
+				h.metrics.IncAuthFailure()
+			}
 			writeErr(w, http.StatusUnauthorized, remote.CodeUnauthorized, "authentication failed")
 			return
 		}
