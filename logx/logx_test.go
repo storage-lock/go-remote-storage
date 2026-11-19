@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,8 +15,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func captureLogger(level slog.Level) (*slog.Logger, *bytes.Buffer) {
-	buf := &bytes.Buffer{}
+// syncBuffer 是并发安全的 buffer：后台 reporter goroutine 会同时写。
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]byte(nil), b.buf.Bytes()...)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func captureLogger(level slog.Level) (*slog.Logger, *syncBuffer) {
+	buf := &syncBuffer{}
 	return slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: level})), buf
 }
 
