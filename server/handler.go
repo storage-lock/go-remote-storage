@@ -20,6 +20,7 @@ import (
 	"github.com/storage-lock/go-storage"
 	storage_lock "github.com/storage-lock/go-storage-lock"
 	remote "github.com/storage-lock/go-remote-storage"
+	remote_logx "github.com/storage-lock/go-remote-storage/logx"
 )
 
 // Options 是服务端配置。
@@ -135,7 +136,10 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	// 健康检查真的打一次存储，而不是只回 ok。
 	if _, err := h.store.GetTime(ctx); err != nil {
-		h.logger.Error("health check storage error", "err", err)
+		h.logger.Error("health check storage error",
+			"event", remote_logx.EventStorageError,
+			"request_id", remote_logx.RequestIDFrom(r.Context()),
+			"err", err)
 		writeErr(w, http.StatusServiceUnavailable, remote.CodeInternal, "storage unavailable")
 		return
 	}
@@ -164,7 +168,7 @@ func (h *Handler) time(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	t, err := h.store.GetTime(ctx)
 	if err != nil {
-		h.writeStorageError(w, err)
+		h.writeStorageError(w, r.Context(), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, remote.TimeResponse{UnixNano: t.UnixNano()})
@@ -179,7 +183,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	iter, err := h.store.List(ctx)
 	if err != nil {
-		h.writeStorageError(w, err)
+		h.writeStorageError(w, r.Context(), err)
 		return
 	}
 
@@ -223,7 +227,10 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	if truncated {
 		_, _ = bw.WriteString(`],"truncated":true}`)
-		h.logger.Warn("list truncated", "limit", h.maxList)
+		h.logger.Warn("list truncated",
+			"event", remote_logx.EventListTruncated,
+			"request_id", remote_logx.RequestIDFrom(r.Context()),
+			"limit", h.maxList)
 	} else {
 		_, _ = bw.WriteString(`]}`)
 	}
@@ -281,7 +288,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, id string) {
 	defer cancel()
 	raw, err := h.store.Get(ctx, id)
 	if err != nil {
-		h.writeStorageError(w, err)
+		h.writeStorageError(w, r.Context(), err)
 		return
 	}
 	info, err := storage.LockInformationFromJsonString(raw)
@@ -309,7 +316,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, id string) {
 	ctx, cancel := h.opCtx(r)
 	defer cancel()
 	if err := h.store.CreateWithVersion(ctx, id, req.Version, info); err != nil {
-		h.writeStorageError(w, err)
+		h.writeStorageError(w, r.Context(), err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
@@ -328,7 +335,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, id string) {
 	ctx, cancel := h.opCtx(r)
 	defer cancel()
 	if err := h.store.UpdateWithVersion(ctx, id, req.ExpectedVersion, req.NewVersion, info); err != nil {
-		h.writeStorageError(w, err)
+		h.writeStorageError(w, r.Context(), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
@@ -351,7 +358,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, id string) {
 	ctx, cancel := h.opCtx(r)
 	defer cancel()
 	if err := h.store.DeleteWithVersion(ctx, id, req.ExpectedVersion, info); err != nil {
-		h.writeStorageError(w, err)
+		h.writeStorageError(w, r.Context(), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -361,7 +368,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, id string) {
 //
 // 映射必须精确：客户端会把 CodeVersionMiss 还原成 ErrVersionMiss，
 // 上层据此决定"重试还是失败"。映射错了会让抢占路径死循环。
-func (h *Handler) writeStorageError(w http.ResponseWriter, err error) {
+func (h *Handler) writeStorageError(w http.ResponseWriter, ctx context.Context, err error) {
 	switch {
 	case errors.Is(err, storage_lock.ErrVersionMiss):
 		writeErr(w, http.StatusConflict, remote.CodeVersionMiss, "version mismatch")
@@ -370,7 +377,10 @@ func (h *Handler) writeStorageError(w http.ResponseWriter, err error) {
 	case errors.Is(err, storage_lock.ErrLockAlreadyExists):
 		writeErr(w, http.StatusConflict, remote.CodeLockExists, "lock already exists")
 	default:
-		h.logger.Error("storage operation failed", "err", err)
+		h.logger.Error("storage operation failed",
+			"event", remote_logx.EventStorageError,
+			"request_id", remote_logx.RequestIDFrom(ctx),
+			"err", err)
 		writeErr(w, http.StatusInternalServerError, remote.CodeInternal, "storage operation failed")
 	}
 }
@@ -379,7 +389,12 @@ func (h *Handler) recoverPanic(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				h.logger.Error("panic recovered", "path", r.URL.Path, "panic", rec)
+				h.logger.Error("panic recovered",
+					"event", remote_logx.EventPanic,
+					"request_id", remote_logx.RequestIDFrom(r.Context()),
+					"path", r.URL.Path,
+					"panic", rec,
+					"stack", stackOf())
 				writeErr(w, http.StatusInternalServerError, remote.CodeInternal, "internal error")
 			}
 		}()
@@ -395,6 +410,14 @@ func (h *Handler) requireAuth(fn http.HandlerFunc) http.HandlerFunc {
 		}
 		subject, err := h.auth.Authenticate(r)
 		if err != nil {
+			// 安全事件：只记 IP、路径、请求 ID，绝不记凭据本身。
+			h.logger.Warn("authentication failed",
+				"event", remote_logx.EventAuthFailure,
+				"request_id", remote_logx.RequestIDFrom(r.Context()),
+				"method", r.Method,
+				"path", r.URL.Path,
+				"auth_scheme", authScheme(r),
+			)
 			writeErr(w, http.StatusUnauthorized, remote.CodeUnauthorized, "authentication failed")
 			return
 		}

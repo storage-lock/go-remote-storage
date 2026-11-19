@@ -32,6 +32,12 @@ LockPersonality=true
 SystemCallFilter=@system-service
 SystemCallArchitectures=native
 
+# 日志：走 journald（stdout）。journal 的总容量上限在 /etc/systemd/journald.conf
+# 的 SystemMaxUse 里配，install.sh 会检查并提示。落盘轮转方案见 deploy/logrotate.conf。
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=remote-storage
+
 LimitNOFILE=65535
 MemoryMax=256M
 

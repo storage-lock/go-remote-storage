@@ -86,6 +86,19 @@ else
   exit 1
 fi
 
+echo "==> 检查 journald 容量上限"
+# journal 不限制会无限增长，最终写满磁盘。这里只在没配时提示，不去改用户的全局配置。
+if grep -qE '^#?SystemMaxUse' /etc/systemd/journald.conf 2>/dev/null; then
+  if ! grep -qE '^SystemMaxUse=' /etc/systemd/journald.conf 2>/dev/null; then
+    echo "  ⚠️  /etc/systemd/journald.conf 未设置 SystemMaxUse（journal 可能无限增长）"
+    echo "     建议：取消注释并设为 SystemMaxUse=200M，然后 systemctl restart systemd-journald"
+  else
+    echo "  journald 已配置容量上限：$(grep -E '^SystemMaxUse=' /etc/systemd/journald.conf)"
+  fi
+fi
+# 如果想落到独立文件而不是 journal，用 deploy/logrotate.conf：
+#   sudo cp deploy/logrotate.conf /etc/logrotate.d/remote-storage
+
 cat <<'TIP'
 
 下一步（公网接入）：

@@ -19,6 +19,7 @@ import (
 	"github.com/storage-lock/go-storage"
 	memory_storage "github.com/storage-lock/go-memory-storage"
 	sqlite3_storage "github.com/storage-lock/go-sqlite3-storage"
+	remote_logx "github.com/storage-lock/go-remote-storage/logx"
 	"github.com/storage-lock/go-remote-storage/server"
 )
 
@@ -36,9 +37,16 @@ func run() error {
 	tlsCert := flag.String("tls-cert", os.Getenv("REMOTE_STORAGE_TLS_CERT"), "TLS 证书")
 	tlsKey := flag.String("tls-key", os.Getenv("REMOTE_STORAGE_TLS_KEY"), "TLS 私钥")
 	maxList := flag.Int("max-list-items", 20000, "List 一次返回的最大条数；超过时标记 truncated")
+	logLevel := flag.String("log-level", envOr("REMOTE_STORAGE_LOG_LEVEL", "info"),
+		"日志级别：debug/info/warn/error")
+	logFormat := flag.String("log-format", envOr("REMOTE_STORAGE_LOG_FORMAT", "json"),
+		"日志格式：json（生产，便于采集）或 text（人读）")
 	flag.Parse()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger, err := newLogger(*logLevel, *logFormat)
+	if err != nil {
+		return err
+	}
 	slog.SetDefault(logger)
 
 	store, closer, err := openStorage(context.Background(), *data)
@@ -62,9 +70,15 @@ func run() error {
 		return err
 	}
 
+	// 访问日志在最外层：包住所有路由，保证每个请求都有 request_id。
+	handler := remote_logx.Middleware(remote_logx.MiddlewareOptions{
+		Logger:        logger,
+		SlowThreshold: 2 * time.Second,
+	})(h.Routes())
+
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           h.Routes(),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
