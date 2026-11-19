@@ -1,0 +1,24 @@
+# Prometheus 抓取配置片段，合并到你的 prometheus.yml 的 scrape_configs 里。
+#
+# 关键点：指标端点只在回环上（127.0.0.1:8443 / 18000），
+# 所以要么 Prometheus 与服务同机，要么用 SSH 隧道/内网专线。
+# 不要把 /metrics 暴露到公网——它虽然不含租户信息，但会泄露流量规模与错误率。
+
+scrape_configs:
+  - job_name: remote-storage
+    scrape_interval: 15s
+    scrape_timeout: 5s
+    static_configs:
+      - targets: ["127.0.0.1:8443"]
+        labels:
+          service: remote-storage
+          node: cn-east        # 换成你的节点名
+
+  - job_name: storage-lock-cloud
+    scrape_interval: 15s
+    scrape_timeout: 5s
+    static_configs:
+      - targets: ["127.0.0.1:18000"]
+        labels:
+          service: storage-lock-cloud
+          node: cn-east

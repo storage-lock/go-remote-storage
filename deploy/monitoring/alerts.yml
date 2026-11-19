@@ -1,0 +1,124 @@
+# Prometheus 告警规则。
+#
+# 合并到 prometheus.yml 的 rule_files 里：
+#   rule_files:
+#     - /etc/prometheus/alerts.yml
+
+groups:
+  - name: storage-lock-availability
+    interval: 30s
+    rules:
+      # 服务不可达：最优先，任何其他告警都可能因此产生。
+      - alert: RemoteStorageDown
+        expr: up{job="remote-storage"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "远程存储服务不可达 ({{ $labels.node }})"
+          description: "{{ $labels.instance }} 已 2 分钟无响应。所有依赖它的锁操作都会失败。"
+
+      - alert: CloudAPIDown
+        expr: up{job="storage-lock-cloud"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "锁 API 不可达 ({{ $labels.node }})"
+
+      # 5xx 比例高：说明存储或代码出问题。
+      - alert: StorageHighErrorRate
+        expr: |
+          sum(rate(remote_storage_http_requests_total{status_class="5xx"}[5m]))
+          /
+          sum(rate(remote_storage_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "远程存储 5xx 比例超过 5%"
+          description: "近 5 分钟 5xx 占比 {{ $value | humanizePercentage }}。检查存储可用性与磁盘空间。"
+
+      - alert: CloudAPIHighErrorRate
+        expr: |
+          sum(rate(storage_lock_cloud_http_requests_total{status_class="5xx"}[5m]))
+          /
+          sum(rate(storage_lock_cloud_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "锁 API 5xx 比例超过 5%"
+
+      # panic 任何非零都是 bug。
+      - alert: PanicDetected
+        expr: increase(remote_storage_panics_total[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "请求处理中发生了 panic"
+          description: "这是代码 bug，需要带 request_id 查日志复现。"
+
+      # 延迟：p95 超过 1 秒。
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(remote_storage_http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 延迟超过 1s"
+          description: "当前 p95 = {{ $value }}s。跨地域部署时确认不是单个节点拖慢。"
+
+  - name: storage-lock-behaviour
+    interval: 30s
+    rules:
+      # 鉴权失败突增：可能是配置错误，也可能是被扫。
+      - alert: AuthFailureSpike
+        expr: increase(remote_storage_auth_failures_total[10m]) > 50
+        labels:
+          severity: warning
+        annotations:
+          summary: "10 分钟内鉴权失败超过 50 次"
+          description: "查 auth_failure 日志的 ip 字段，确认是配置问题还是扫描。"
+
+      # 限流频繁命中：说明有人在刷，或者额度对小规模用户太小。
+      - alert: RateLimitedHeavy
+        expr: increase(remote_storage_rate_limited_total[10m]) > 100
+        labels:
+          severity: warning
+        annotations:
+          summary: "10 分钟内限流命中超过 100 次"
+
+      # List 截断：说明锁数量接近上限，该扩容或改分页。
+      - alert: ListTruncated
+        expr: increase(remote_storage_list_truncated_total[1h]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "List 结果被截断"
+          description: "锁数量接近 --max-list-items 上限。考虑调高上限或实现分页。"
+
+      # 版本冲突高：正常竞争会有一点，但持续很高说明争抢激烈。
+      # 注意：version_miss 在指标里记为 result="error" 但语义是"可重试"，
+      # 所以这里按操作级的 error 速率判断，而不是按 storage_errors_total（那只是非预期错误）。
+      - alert: HighContention
+        expr: |
+          sum(rate(remote_storage_storage_operations_total{operation="update",result="error"}[5m])) > 10
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "锁 CAS 冲突较激烈"
+          description: "update 操作错误速率持续 >10/s。设计内争抢可忽略；否则检查是否有客户端不释放锁。"
+
+      # 慢请求增加。
+      - alert: SlowRequestsIncreasing
+        expr: increase(remote_storage_slow_requests_total[15m]) > 20
+        labels:
+          severity: warning
+        annotations:
+          summary: "慢请求数量上升"
+          description: "结合 slow_request 日志定位是哪个路由。"

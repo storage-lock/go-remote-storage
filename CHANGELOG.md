@@ -20,6 +20,22 @@
 - `List` 改为流式编码：边遍历边写 JSON，不再把全部锁攒进切片再序列化。
   20000 条时实测 RSS 从 **265MB 降到 19MB**（降 93%），响应时间不变（0.17s）。
 
+## v0.1.8
+
+### 新增 Prometheus 指标
+
+- `metrics` 包：HTTP（请求数/耗时/在飞/响应字节）、存储操作（按操作与结果）、
+  鉴权失败、限流、List 截断、panic、慢请求、build_info。
+- 低基数是硬约束：路由归一化（`/v1/locks/{id}`）、状态码归 2xx/4xx/5xx、
+  随机路径归 `other`；绝不用 lock_id/owner_id/IP 当 label。有测试锁住。
+- `WrapStorage` 只计时不改语义（版本冲突等错误原样传出），有测试断言。
+- `--metrics=false` 可关闭。
+
+### 监控配套
+
+- `deploy/monitoring/prometheus-scrape.yml`、`alerts.yml`（11 条，PromQL 已用
+  真实解析器校验）、`grafana-dashboard.json`（12 个面板）、`README.md`（含排障路径）。
+
 ## v0.1.7
 
 ### 新增 `logx` 日志体系

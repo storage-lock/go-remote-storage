@@ -1,0 +1,84 @@
+{
+  "title": "Storage Lock 服务",
+  "uid": "storage-lock-services",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {"from": "now-6h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(remote_storage_http_requests_total, job)",
+        "includeAll": true,
+        "allValue": ".*"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat", "title": "请求速率", "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "targets": [{"expr": "sum(rate(remote_storage_http_requests_total{job=~\"$job\"}[5m]))"}],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "type": "stat", "title": "5xx 比例", "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "targets": [{"expr": "sum(rate(remote_storage_http_requests_total{status_class=\"5xx\",job=~\"$job\"}[5m])) / sum(rate(remote_storage_http_requests_total{job=~\"$job\"}[5m]))"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 0.01}, {"color": "red", "value": 0.05}]}}}
+    },
+    {
+      "type": "stat", "title": "鉴权失败 / 10m", "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "targets": [{"expr": "increase(remote_storage_auth_failures_total{job=~\"$job\"}[10m])"}]
+    },
+    {
+      "type": "stat", "title": "在飞请求", "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "targets": [{"expr": "sum(remote_storage_http_in_flight_requests{job=~\"$job\"})"}]
+    },
+    {
+      "type": "timeseries", "title": "请求速率（按状态类）", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "targets": [{"expr": "sum(rate(remote_storage_http_requests_total{job=~\"$job\"}[5m])) by (status_class)", "legendFormat": "{{status_class}}"}],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "type": "timeseries", "title": "延迟 p50 / p95 / p99", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(remote_storage_http_request_duration_seconds_bucket{job=~\"$job\"}[5m])) by (le))", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.95, sum(rate(remote_storage_http_request_duration_seconds_bucket{job=~\"$job\"}[5m])) by (le))", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.99, sum(rate(remote_storage_http_request_duration_seconds_bucket{job=~\"$job\"}[5m])) by (le))", "legendFormat": "p99"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "type": "timeseries", "title": "存储操作速率（按操作与结果）", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "targets": [{"expr": "sum(rate(remote_storage_storage_operations_total{job=~\"$job\"}[5m])) by (operation, result)", "legendFormat": "{{operation}} {{result}}"}],
+      "fieldConfig": {"defaults": {"unit": "ops"}}
+    },
+    {
+      "type": "timeseries", "title": "存储操作延迟 p95（按操作）", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "targets": [{"expr": "histogram_quantile(0.95, sum(rate(remote_storage_storage_operation_duration_seconds_bucket{job=~\"$job\"}[5m])) by (le, operation))", "legendFormat": "{{operation}}"}],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "type": "timeseries", "title": "限流命中（按范围）", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "targets": [{"expr": "sum(rate(remote_storage_rate_limited_total{job=~\"$job\"}[5m])) by (scope)", "legendFormat": "{{scope}}"}]
+    },
+    {
+      "type": "timeseries", "title": "异常事件（panic / 截断 / 慢请求）", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+      "targets": [
+        {"expr": "increase(remote_storage_panics_total{job=~\"$job\"}[5m])", "legendFormat": "panic"},
+        {"expr": "increase(remote_storage_list_truncated_total{job=~\"$job\"}[5m])", "legendFormat": "list truncated"},
+        {"expr": "increase(remote_storage_slow_requests_total{job=~\"$job\"}[5m])", "legendFormat": "slow"}
+      ]
+    },
+    {
+      "type": "timeseries", "title": "响应字节速率（按路由）", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+      "targets": [{"expr": "sum(rate(remote_storage_http_response_bytes_total{job=~\"$job\"}[5m])) by (route)", "legendFormat": "{{route}}"}],
+      "fieldConfig": {"defaults": {"unit": "Bps"}}
+    },
+    {
+      "type": "table", "title": "服务状态", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+      "targets": [{"expr": "up{job=~\"$job\"}", "format": "table"}]
+    }
+  ]
+}

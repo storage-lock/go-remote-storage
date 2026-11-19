@@ -189,6 +189,17 @@ storage-lock-cloud-api --remote https://127.0.0.1:8443 --remote-token "$TOKEN"
 配了它就不再用本地 SQLite，而是把 `go-remote-storage` 当后端。
 这样同一台 VPS 可以同时对外提供锁 API，也可以被自己的其他服务直接用。
 
+## 监控与日志
+
+- **指标**：`/metrics` 暴露 Prometheus 指标（HTTP/存储/限流/鉴权/panic/慢请求），
+  label 严格低基数（不用 lock_id/owner_id/IP）。`--metrics=false` 可关闭。
+- **日志**：结构化 JSON，每请求带 `request_id`（回写 `X-Request-Id`），
+  安全事件用固定 `event` 名，**凭据绝不进日志**。
+- **配套**：`deploy/monitoring/` 有 Prometheus 抓取配置、11 条告警规则
+  （已用真实 PromQL 解析器校验）、Grafana 面板 JSON。
+
+详见 [deploy/monitoring/README.md](deploy/monitoring/README.md)。
+
 ## 边界
 
 - `List()` 一次性返回全部锁。规模在几十到几千把锁时没问题；
